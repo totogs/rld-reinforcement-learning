@@ -28,9 +28,9 @@ if __name__ == '__main__':
     writer = SummaryWriter()
 
     # Enregistrement de l'Agent
-    agent = DeepQlearningAgent(env.action_space.n,4)
+    #agent = DeepQlearningAgent(env.action_space.n,4)
 
-    #agent = ActorCritic(env,4)
+    agent = ActorCritic(env,4)
 
     outdir = 'cartpole-v0/random-agent-results'
     envm = wrappers.Monitor(env, directory=outdir, force=True, video_callable=False)
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     done = False
     env.verbose = True
     rsum = 0
-
+    env._max_episode_steps = 10000
     for i in range(episode_count):
         obs = envm.reset()
         env.verbose = (i % 10 == 0 and i > 0)  # afficher 1 episode sur 100

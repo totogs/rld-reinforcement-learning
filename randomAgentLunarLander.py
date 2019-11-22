@@ -8,6 +8,7 @@ import numpy as np
 import copy
 
 from actorCritic import *
+from deepQLearning import *
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -27,7 +28,9 @@ if __name__ == '__main__':
     env = gym.make('LunarLander-v2')
 
     # Enregistrement de l'Agent
-    agent = agent = ActorCritic(env,8)
+    agent = ActorCritic(env,8)
+
+    #agent = DeepQlearningAgent(env.action_space.n,8, replay_memory_capacity=1000, ctarget=1000,layers=[200], batch_size=20, lr=0.0001, gamma=0.99, epsilon=0.1, epsilon_decay=0.99999)
 
     outdir = 'LunarLander-v2/results'
     envm = wrappers.Monitor(env, directory=outdir, force=True, video_callable=False)
@@ -42,7 +45,7 @@ if __name__ == '__main__':
     env._max_episode_steps = 200
     for i in range(episode_count):
         obs = envm.reset()
-        env.verbose = (i % 100 == 0 and i > 0)  # afficher 1 episode sur 100
+        env.verbose = (i % 500 == 0 and i > 0)  # afficher 1 episode sur 100
         if env.verbose:
             env.render()
         j = 0

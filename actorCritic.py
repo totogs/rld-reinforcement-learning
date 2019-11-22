@@ -72,7 +72,7 @@ class Actor(nn.Module):
         for i in range(1, len(self.layers)):
         	x = torch.nn.functional.tanh(x)
         	x = self.layers[i](x)
-        distribution = Categorical(f.softmax(x, dim=-1))
+        distribution = Categorical(f.softmax(x))
         return distribution
 
 
@@ -102,11 +102,11 @@ class ActorCritic():
         self.lr = lr
         self.gamma = gamma
 
-        self.Pinet = Actor(state_dim, self.n_actions, layers=[30,30])
-        self.Vnet = Critic(state_dim, layers=[30,30])
+        self.Pinet = Actor(state_dim, self.n_actions, layers=[128])
+        self.Vnet = Critic(state_dim, layers=[128])
 
-        self.Pioptimizer = optim.Adam(self.Pinet.parameters())
-        self.Voptimizer = optim.Adam(self.Vnet.parameters())
+        self.Pioptimizer = optim.Adam(self.Pinet.parameters(),lr=0.001)
+        self.Voptimizer = optim.Adam(self.Vnet.parameters(),lr=0.01)
         self.Vcriterion = nn.SmoothL1Loss()
 
         self.lobs = None
@@ -126,18 +126,17 @@ class ActorCritic():
 
         self.lobs = torch.from_numpy(obs).float()
 
-        with torch.no_grad():
-            distrib = self.Pinet(self.lobs.unsqueeze(0))
-            value = self.Vnet(self.lobs.unsqueeze(0))
+        distrib = self.Pinet(self.lobs.unsqueeze(0))
+        value = self.Vnet(self.lobs.unsqueeze(0))
 
         action = distrib.sample()
         self.lact = action
 
+        self.trajectory.append((reward, value, distrib.log_prob(action).unsqueeze(0)))
+
         if done:
             self.step()
             self.trajectory = list()
-        else:
-            self.trajectory.append((reward, value, distrib.log_prob(action).unsqueeze(0)))
 
         return action.squeeze().numpy()
 
@@ -156,16 +155,8 @@ class ActorCritic():
 
         v_target.reverse()
 
+
         v_target = torch.tensor(v_target, dtype=torch.float).detach()
-
-
-        for (_, logprob, value), R  in zip(self.trajectory, v_target):
-
-            avantage = R - value.item()
-
-            policy_losses.append(-logprob*avantage)
-            value_losses.append(self.Vcriterion(value,torch.tensor([R])))
-
 
 
         values = torch.cat([val for (_,val,_) in self.trajectory])
@@ -174,21 +165,21 @@ class ActorCritic():
 
 
 
-        values = self.Vnet(states).squeeze()
-
-
         avantages = v_target - values
 
 
         Ploss = -(logprobs*avantages.detach()).mean()
-        Vloss = avantages.pow(2).mean()
+        Vloss = avantages.pow(2).mean().requires_grad_()
 
         self.Voptimizer.zero_grad()
         self.Pioptimizer.zero_grad()
         Ploss.backward()
         Vloss.backward()
+
+
         self.Voptimizer.step()
         self.Pioptimizer.step()
+
 
         writer.add_scalar('Ploss_per_episode',Ploss.item(),self.ep)
         writer.add_scalar('Vloss_per_episode',Vloss.item(),self.ep)

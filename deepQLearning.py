@@ -73,7 +73,7 @@ class ReplayMemory(object):
 class DeepQlearningAgent():
 
 	def __init__(self, n_actions, state_dim, replay_memory_capacity=100000,
-				 ctarget=1000, batch_size=100, lr=0.001, gamma=0.999,
+				 ctarget=1000, layers=[], batch_size=100, lr=0.001, gamma=0.999,
 				 epsilon=0.01, epsilon_decay=0.99999, verbose=False):
 
 		self.replay_memory = ReplayMemory(replay_memory_capacity)
@@ -86,7 +86,7 @@ class DeepQlearningAgent():
 		self.gamma = gamma
 		self.batch_size = batch_size
 
-		self.Q = NN(state_dim, n_actions,layers=[200]).to(device)
+		self.Q = NN(state_dim, n_actions,layers).to(device)
 		self.Q_target = copy.deepcopy(self.Q).to(device)
 		self.optimizer = optim.Adam(self.Q.parameters())
 		self.criterion = nn.SmoothL1Loss()
@@ -99,7 +99,7 @@ class DeepQlearningAgent():
 	def act(self, obs, reward, done):
 
 		obs = torch.tensor(obs).float().to(device)
-		reward = torch.tensor(reward)
+		reward = torch.tensor(reward).float().to(device)
 
 		if self.t < self.batch_size:
 			if self.t > 0:
@@ -124,14 +124,14 @@ class DeepQlearningAgent():
 
 		state_batch = torch.stack(batch.state).float().to(device)
 		action_batch = torch.stack(batch.action).to(device)
-		reward_batch = torch.stack(batch.reward).to(device)
+		reward_batch = torch.stack(batch.reward).float().to(device)
 
 		# get output for batch
 		# extract Q values only for played actions
 		state_action_values = self.Q(state_batch).gather(1, action_batch.unsqueeze(1))
 
 
-		next_state_values = torch.zeros(self.batch_size, device=device)
+		next_state_values = torch.zeros(self.batch_size, device=device).float()
 		next_state_values[non_final_mask] = self.Q_target(non_final_next_states).max(1)[0].detach()
 
 		expected_state_action_values = (next_state_values * self.gamma) + reward_batch
