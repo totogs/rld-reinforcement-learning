@@ -72,9 +72,9 @@ if __name__ == '__main__':
 
     # Execution avec un Agent
     state_dim = FE.getFeatures(env.reset()).shape[1]
-    agent = ActorCritic(env,state_dim)
+    agent = ActorCritic(env,state_dim, layers=[30,30], lrpi=0.001, lrv=0.001)
 
-    episode_count = 10000
+    episode_count = 1000
     reward = 0
     done = False
     rsum = 0
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     for i in range(episode_count):
         obs = env.reset()
         agent.setState(FE.getFeatures(obs))
-        env.verbose = (i % 1000 == 0 and i > 0)  # afficher 1 episode sur 100
+        env.verbose = (i % 100 == 0 and i > 0)  # afficher 1 episode sur 100
         if env.verbose:
             env.render(FPS)
         j = 0

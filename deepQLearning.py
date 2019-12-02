@@ -8,10 +8,9 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as f
 import copy
-from torch.utils.tensorboard import SummaryWriter
 from collections import namedtuple
+from utils import CheckpointState, EarlyStopper
 
-writer = SummaryWriter()
 
 class NN(nn.Module):
 	def __init__(self, inSize, outSize, layers=[]):
@@ -73,7 +72,7 @@ class ReplayMemory(object):
 class DeepQlearningAgent():
 
 	def __init__(self, n_actions, state_dim, replay_memory_capacity=100000,
-				 ctarget=1000, layers=[], batch_size=100, lr=0.001, gamma=0.999,
+				 ctarget=1000, layers=[200], batch_size=100, lr=0.001, gamma=0.999,
 				 epsilon=0.01, epsilon_decay=0.99999, verbose=False):
 
 		self.replay_memory = ReplayMemory(replay_memory_capacity)
@@ -88,32 +87,45 @@ class DeepQlearningAgent():
 
 		self.Q = NN(state_dim, n_actions,layers).to(device)
 		self.Q_target = copy.deepcopy(self.Q).to(device)
-		self.optimizer = optim.Adam(self.Q.parameters())
+		self.optimizer = optim.Adam(self.Q.parameters(), lr=lr)
 		self.criterion = nn.SmoothL1Loss()
 
 		self.lobs = None
 		self.laction = None
 		self.t = 0
 
+		self.checkpoint = CheckpointState(self.Q, self.optimizer, savepath="deep-Q-checkpt.pt")
 
 	def act(self, obs, reward, done):
 
 		obs = torch.tensor(obs).float().to(device)
 		reward = torch.tensor(reward).float().to(device)
 
-		if self.t < self.batch_size:
-			if self.t > 0:
-				self.replay_memory.push(self.lobs, self.laction, obs, reward)
-			self.t += 1
-			self.lobs = obs
+		if self.t > 0:
+			self.replay_memory.push(self.lobs, self.laction, obs, reward)
 
+		# epsilon greedy choice
+		if random.random() < self.epsilon:
 			action = random.randint(0, self.n_actions-1)
-			self.laction = torch.tensor(action)
+		else:
+			_ , action = torch.max(self.Q(obs.unsqueeze(0)),1)
+			action = action.item()
 
-			return action
 
-		# store transitions in replay memory D
-		self.replay_memory.push(self.lobs, self.laction, obs, reward)
+		self.epsilon *= self.epsilon_decay
+
+		self.lobs = obs
+		self.laction = torch.tensor(action)
+
+		return action
+
+
+	def optimize(self,done):
+
+		if self.t < self.batch_size:
+			self.t += 1
+			return 0
+
 		# sample random minibatch of transitions from memory
 
 		transitions = self.replay_memory.sample(self.batch_size)
@@ -142,28 +154,19 @@ class DeepQlearningAgent():
 		self.optimizer.zero_grad()
 		loss.backward()
 
+		self.optimizer.step()
 		# gradient descent step
 		for param in self.Q.parameters():
 		    param.grad.data.clamp_(-1, 1)
-		self.optimizer.step()
 
-		writer.add_scalar('loss_per_episode', loss.item(), self.t)
 		self.t += 1
 
-		# every C step, reset target network
+		# every C step, reset target networkpe
 		if self.t % self.ctarget == 0:
 			self.Q_target = copy.deepcopy(self.Q)
 
-		# epsilon greedy choice
-		if random.random() < self.epsilon:
-			action = random.randint(0, self.n_actions-1)
-		else:
-			_ , action = torch.max(self.Q(obs.unsqueeze(0)),1)
-			action = action.item()
+		if done:
+			self.checkpoint.model = self.Q
+			self.checkpoint.optimizer = self.optimizer
 
-		self.epsilon *= self.epsilon_decay
-
-		self.lobs = obs
-		self.laction = torch.tensor(action)
-
-		return action
+		return loss.item()

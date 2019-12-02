@@ -95,18 +95,17 @@ class Critic(nn.Module):
 
 class ActorCritic():
 
-    def __init__(self, env, state_dim, lr=0.85, gamma=0.99, verbose=False):
+    def __init__(self, env, state_dim, layers=[128], lrv=0.001, lrpi=0.001, gamma=0.99, verbose=False):
 
         self.trajectory = list()
         self.n_actions = env.action_space.n
-        self.lr = lr
         self.gamma = gamma
 
-        self.Pinet = Actor(state_dim, self.n_actions, layers=[128])
-        self.Vnet = Critic(state_dim, layers=[128])
+        self.Pinet = Actor(state_dim, self.n_actions, layers=layers)
+        self.Vnet = Critic(state_dim, layers=layers)
 
-        self.Pioptimizer = optim.Adam(self.Pinet.parameters(),lr=0.001)
-        self.Voptimizer = optim.Adam(self.Vnet.parameters(),lr=0.01)
+        self.Pioptimizer = optim.Adam(self.Pinet.parameters(),lr=lrpi)
+        self.Voptimizer = optim.Adam(self.Vnet.parameters(),lr=lrv)
         self.Vcriterion = nn.SmoothL1Loss()
 
         self.lobs = None

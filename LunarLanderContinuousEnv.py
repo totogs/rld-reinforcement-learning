@@ -6,8 +6,8 @@ import gridworld
 from gym import wrappers, logger
 import numpy as np
 import copy
-from deepQLearning import *
-from actorCritic import *
+
+from deterministicPolicyGradient import *
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -24,27 +24,26 @@ class RandomAgent(object):
 if __name__ == '__main__':
 
 
-    env = gym.make('CartPole-v0')
-    writer = SummaryWriter()
+    env = gym.make('LunarLanderContinuous-v2')
+    print(env.action_space.shape)
 
     # Enregistrement de l'Agent
-    #agent = DeepQlearningAgent(env.action_space.n,4)
+    agent = DeepDeterministicPG(2,8)
 
-    agent = ActorCritic(env,4)
-
-    outdir = 'cartpole-v0/random-agent-results'
+    outdir = 'LunarLanderContinuous-v2/results'
     envm = wrappers.Monitor(env, directory=outdir, force=True, video_callable=False)
     env.seed(0)
 
-    episode_count = 8000
+    episode_count = 100000
     reward = 0
     done = False
     env.verbose = True
+    np.random.seed(5)
     rsum = 0
-    env._max_episode_steps = 10000
+    env._max_episode_steps = 200
     for i in range(episode_count):
         obs = envm.reset()
-        env.verbose = (i % 10 == 0 and i > 0)  # afficher 1 episode sur 100
+        env.verbose = (i % 500 == 0 and i > 0)  # afficher 1 episode sur 100
         if env.verbose:
             env.render()
         j = 0
