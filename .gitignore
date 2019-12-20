@@ -6,6 +6,9 @@
 /gridworld/
 /gridworld-v2/
 /LunarLander-v2/
+/LunarLanderContinuous-v2/
+/Pendulum-v0/
+/MountainCarContinuous-v0/
 
 
 # Byte-compiled / optimized / DLL files
