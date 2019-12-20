@@ -13,44 +13,59 @@ from collections import namedtuple
 
 writer = SummaryWriter()
 
-class NN(nn.Module):
-	def __init__(self, inSize, outSize, layers=[]):
-		super(NN, self).__init__()
-		self.layers = nn.ModuleList([])
-		for x in layers:
-			self.layers.append(nn.Linear(inSize, x))
-			inSize = x
-		self.layers.append(nn.Linear(inSize, outSize))
-	def forward(self, x):
-		x = self.layers[0](x)
-		for i in range(1, len(self.layers)):
-			x = torch.nn.functional.leaky_relu(x)
-			x = self.layers[i](x)
-		return x
 
 
-class Qnet(nn.Module):
-	def __init__(self, state_dim, action_dim, layers=[]):
-		super(Qnet, self).__init__()
-		self.layers = nn.ModuleList([])
-		self.layers.append(nn.Linear(state_dim,layers[0]))
-		self.layers.append(nn.Linear(layers[0]+action_dim,layers[1]))
+def fanin_init(size, fanin=None):
+    fanin = fanin or size[0]
+    v = 1. / np.sqrt(fanin)
+    return torch.Tensor(size).uniform_(-v, v)
 
-		inSize = layers[1]
-		for x in layers[2:]:
-			self.layers.append(nn.Linear(inSize, x))
-			inSize = x
-		self.layers.append(nn.Linear(inSize, 1))
+class Actor(nn.Module):
+    def __init__(self, nb_states, nb_actions, hidden1=40, hidden2=30, init_w=3e-4):
+        super(Actor, self).__init__()
+        self.fc1 = nn.Linear(nb_states, hidden1)
+        self.fc2 = nn.Linear(hidden1, hidden2)
+        self.fc3 = nn.Linear(hidden2, nb_actions)
+        self.relu = nn.LeakyReLU()
+        self.tanh = nn.Tanh()
+        self.init_weights(init_w)
 
-	def forward(self, state, action):
-		x = self.layers[0](state)
-		x = self.layers[1](torch.cat([x,action]))
+    def init_weights(self, init_w):
+        self.fc1.weight.data = fanin_init(self.fc1.weight.data.size())
+        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
+        self.fc3.weight.data.uniform_(-init_w, init_w)
 
-		for i in range(2, len(self.layers)):
-			x = torch.nn.functional.leaky_relu(x)
-			x = self.layers[i](x)
+    def forward(self, x):
+        out = self.fc1(x)
+        out = self.relu(out)
+        out = self.fc2(out)
+        out = self.relu(out)
+        out = self.fc3(out)
+        out = self.tanh(out)
+        return out
 
-		return torch.nn.tanh(x)
+class Critic(nn.Module):
+    def __init__(self, nb_states, nb_actions, hidden1=40, hidden2=30, init_w=3e-4):
+        super(Critic, self).__init__()
+        self.fc1 = nn.Linear(nb_states, hidden1)
+        self.fc2 = nn.Linear(hidden1+nb_actions, hidden2)
+        self.fc3 = nn.Linear(hidden2, 1)
+        self.relu = nn.LeakyReLU()
+        self.init_weights(init_w)
+
+    def init_weights(self, init_w):
+        self.fc1.weight.data = fanin_init(self.fc1.weight.data.size())
+        self.fc2.weight.data = fanin_init(self.fc2.weight.data.size())
+        self.fc3.weight.data.uniform_(-init_w, init_w)
+
+    def forward(self, x, a):
+        out = self.fc1(x)
+        out = self.relu(out)
+        # debug()
+        out = self.fc2(torch.cat([out,a],1))
+        out = self.relu(out)
+        out = self.fc3(out)
+        return out
 
 
 random.seed(42)
@@ -58,7 +73,7 @@ random.seed(42)
 
 
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward', 'done'))
+                    ('state', 'action', 'next_state', 'reward', 'done'))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -85,108 +100,122 @@ class ReplayMemory(object):
 
 class DeepDeterministicPG():
 
-	def __init__(self, n_actions, state_dim, replay_memory_capacity=100000, rho=0.8,  aLow=-1, aHigh=1,
-				 c_update=1000, n_update=20, layersP=[128], layersQ=[10,10,10], batch_size=100, lr=0.001, gamma=0.999, verbose=False):
+    def __init__(self, n_actions, state_dim, replay_memory_capacity=100000, rhoP=0.95, rhoQ=0.95,  aLow=-1, aHigh=1, epsilon = 0.1, decay = 0.9999,
+    		 c_update=1000, n_update=100, batch_size=100, plr=0.0001, lr=0.001, gamma=0.99, verbose=False):
 
-		self.replay_memory = ReplayMemory(replay_memory_capacity)
-		self.replay_memory_capacity = replay_memory_capacity
-		self.c_update = c_update
-		self.n_update = n_update
+        self.replay_memory = ReplayMemory(replay_memory_capacity)
+        self.replay_memory_capacity = replay_memory_capacity
+        self.c_update = c_update
+        self.n_update = n_update
 
-		self.n_actions = n_actions
-		self.lr = lr
-		self.rho =rho
-		self.gamma = gamma
-		self.batch_size = batch_size
+        self.n_actions = n_actions
+        self.plr = plr
+        self.lr = lr
+        self.rhoP = rhoP
+        self.rhoQ = rhoQ
+        self.gamma = gamma
+        self.epsilon = epsilon
+        self.decay = decay
+        self.batch_size = batch_size
 
-		self.aLow = aLow
-		self.aHigh = aHigh
+        self.aLow = aLow
+        self.aHigh = aHigh
 
-		self.policy = NN(state_dim, n_actions,layers=layersP).to(device)
-		self.policy_target = copy.deepcopy(self.policy).to(device)
-		self.Q = Qnet(state_dim, n_actions,layers=layersQ).to(device)
-		self.Q_target = copy.deepcopy(self.Q).to(device)
+        self.policy = Actor(state_dim, n_actions).to(device)
+        self.policy_target = copy.deepcopy(self.policy).to(device)
 
-		self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.lr)
-		self.Q_optimizer = optim.Adam(self.Q.parameters(), lr=self.lr)
-		self.criterion = nn.MSELoss()
+        self.Q = Critic(state_dim, n_actions).to(device)
+        self.Q_target = copy.deepcopy(self.Q).to(device)
 
-		self.lobs = None
-		self.laction = None
-		self.t = 0
-		self.decay = 1
+        self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=self.plr)
+        self.Q_optimizer = optim.Adam(self.Q.parameters(), lr=self.lr, weight_decay=0)
+        self.criterion = nn.MSELoss()
 
-
-	def act(self, obs, reward, done):
-
-		obs = torch.tensor(obs).float().to(device)
-		reward = torch.tensor(reward).float().to(device)
-
-		if self.t < self.batch_size:
-			if self.t > 0:
-				self.replay_memory.push(self.lobs, self.laction, obs, reward, done)
-			self.t += 1
-			self.lobs = obs
-
-			action = self.policy(obs) + torch.randn(self.n_actions).to(device)*0.01*self.decay
-			action._clamp(self.aLow,self.aHigh)
-
-			self.decay *= 0.9999
-			self.laction = torch.tensor(action)
-
-			return action
-
-		# store transitions in replay memory D
-		self.replay_memory.push(self.lobs, self.laction, obs, reward, done)
-		# sample random minibatch of transitions from memory
+        self.lobs = None
+        self.laction = None
+        self.t = 0
+        self.updt_cpt = 0
 
 
-		writer.add_scalar('loss_per_episode', loss.item(), self.t)
-		self.t += 1
 
-		# every C step, reset target network
-		if self.t % self.c_update == 0:
-			for i in range(self.n_update):
-				self.update()
+    def act(self, obs, reward, done):
 
-		action = self.policy(obs) + torch.randn(self.n_actions)*0.01*self.decay
-		action.clamp_(-1,1)
-
-		self.decay *= 0.9999
-
-		self.lobs = obs
-		self.laction = torch.tensor(action)
-
-		return action
-
-		def update(self):
-
-			transitions = self.replay_memory.sample(self.batch_size)
-			batch = Transition(*zip(*transitions))
-
-			state_batch = torch.stack(batch.state).float().to(device)
-			action_batch = torch.stack(batch.action).float().to(device)
-			reward_batch = torch.stack(batch.reward).float().to(device)
-			next_state_batch = torch.stack(batch.next_state).float().to(device)
-			done_batch = torch.stack(batch.done).to(device)
-
-			y_batch = reward_batch + self.gamma*(1-done_batch)*self.Q_target(next_state_batch, self.policy_target(next_state_batch))
-
-			self.policy_optimizer.zero_grad()
-			self.Q_optimizer.zero_grad()
-
-			Qloss = self.criterion(self.Q(state_batch, action_batch), y_batch).mean()
-			Qloss.backward()
-
-			Policyloss = self.Q(state_batch, self.policy(state_batch)).mean()
-			Policyloss.backward()
+    	obs = torch.tensor(obs).float().to(device)
+    	reward = torch.tensor([reward]).float().to(device)
 
 
-			self.policy_optimizer.step()
-			self.Q_optimizer.step()
+    	with torch.no_grad():
+    		if self.t < self.batch_size:
+    			if self.t > 0:
+    				self.replay_memory.push(self.lobs, self.laction, obs, reward, done)
+    			self.t += 1
+    			self.lobs = obs
 
-			for param_target, param in zip(self.Q_target.parameters(), self.Q.parameters()):
-			    param_target.data = self.rho*param_target.data + (1-self.rho)*param.data
+    			action = self.policy(obs.unsqueeze(0)) + torch.randn(1,self.n_actions).to(device)*self.epsilon
+    			action.clamp_(self.aLow,self.aHigh)
+    			action = action.squeeze(0)
 
-			for param_target, param in zip(self.policy_target.parameters(), self.policy.parameters()):
-			    param_target.data = self.rho*param_target.data + (1-self.rho)*param.data
+    			self.epsilon *= self.decay
+    			self.laction = action
+
+
+    			return action.cpu().numpy()
+
+    		# store transitions in replay memory D
+    		self.replay_memory.push(self.lobs, self.laction, obs, reward, done)
+    		# sample random minibatch of transitions from memory
+
+
+
+    		action = self.policy(obs.unsqueeze(0)) + torch.randn(1,self.n_actions).to(device)*self.epsilon
+    		action.clamp_(self.aLow,self.aHigh)
+    		action = action.squeeze(0)
+
+    		self.epsilon *= self.decay
+
+    		self.lobs = obs
+    		self.laction = action
+
+    	# every C step, reset target network
+    	if self.t % self.c_update == 0:
+    		for i in range(self.n_update):
+    			self.update()
+
+    	self.t += 1
+
+
+    	return action.cpu().numpy()
+
+    def update(self):
+
+        transitions = self.replay_memory.sample(self.batch_size)
+        batch = Transition(*zip(*transitions))
+
+        state_batch = torch.stack(batch.state).float().to(device).requires_grad_()
+        action_batch = torch.stack(batch.action).float().to(device)
+        reward_batch = torch.stack(batch.reward).float().to(device)
+        next_state_batch = torch.stack(batch.next_state).float().to(device)
+        done_batch = torch.stack([torch.tensor([1.0]) if s else torch.tensor([0.0]) for s in batch.done]).float().to(device)
+
+        y_batch = reward_batch + self.gamma*(1.0-done_batch)*self.Q_target(next_state_batch, self.policy_target(next_state_batch))
+
+        self.policy_optimizer.zero_grad()
+        self.Q_optimizer.zero_grad()
+
+        Qloss = self.criterion(self.Q(state_batch, action_batch), y_batch.detach())
+        Qloss.backward()
+        self.Q_optimizer.step()
+
+        Policyloss = -self.Q(state_batch, self.policy(state_batch)).mean()
+        Policyloss.backward()
+        self.policy_optimizer.step()
+
+        writer.add_scalar("Qloss",Qloss,self.updt_cpt)
+        writer.add_scalar("policyLoss",Policyloss, self.updt_cpt)
+        self.updt_cpt += 1
+
+        for param_target, param in zip(self.Q_target.parameters(), self.Q.parameters()):
+            param_target.data.copy_(self.rhoQ*param_target.data + (1-self.rhoQ)*param.data)
+
+        for param_target, param in zip(self.policy_target.parameters(), self.policy.parameters()):
+            param_target.data.copy_(self.rhoP*param_target.data + (1-self.rhoP)*param.data)

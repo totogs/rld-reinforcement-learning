@@ -25,10 +25,9 @@ if __name__ == '__main__':
 
 
     env = gym.make('LunarLanderContinuous-v2')
-    print(env.action_space.shape)
 
     # Enregistrement de l'Agent
-    agent = DeepDeterministicPG(2,8)
+    agent = DeepDeterministicPG(2,8, aLow=-1, aHigh=1)
 
     outdir = 'LunarLanderContinuous-v2/results'
     envm = wrappers.Monitor(env, directory=outdir, force=True, video_callable=False)
@@ -50,7 +49,7 @@ if __name__ == '__main__':
         rsum = 0
         while True:
             action = agent.act(obs, reward, done)
-            obs, reward, done, _ = envm.step(action)
+            obs, reward, done, _ = env.step(action)
             rsum += reward
             j += 1
             if env.verbose:

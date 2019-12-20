@@ -15,11 +15,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 writer = SummaryWriter()
 
-for n_iter in range(100):
-    writer.add_scalar('Loss/train', np.random.random(), n_iter)
-    writer.add_scalar('Loss/test', np.random.random(), n_iter)
-    writer.add_scalar('Accuracy/train', np.random.random(), n_iter)
-    writer.add_scalar('Accuracy/test', np.random.random(), n_iter)
 
 class NN(nn.Module):
 	def __init__(self, inSize, outSize, layers=[]):
@@ -174,7 +169,6 @@ class ActorCritic():
         self.Pioptimizer.zero_grad()
         Ploss.backward()
         Vloss.backward()
-
 
         self.Voptimizer.step()
         self.Pioptimizer.step()
